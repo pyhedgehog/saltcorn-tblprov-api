@@ -144,11 +144,15 @@ function api_configuration_workflow(req) {
             const remote_tbl = await api_scapi_table(context);
             console.log("remote_tbl =", remote_tbl);
             fields = remote_tbl.fields.map(function convert_field(field) {
-              let fld = Object.fromEntries(Object.entries(field));
+              let fld = Object.fromEntries(Object.entries(field).filter(([k,v])=>(v!==null&&v!==false)));
               fld.type =
                 typeof fld.type === "object" ? fld.type.name : fld.type;
               if (fld.type === "Key") fld.type = fld.reftype;
               if (!fld.description) delete fld.description;
+              if(typeof fld.attributes == "object")
+                fld.attributes = Object.fromEntries(Object.entries(fld.attributes).filter(([k,v])=>(v!==null)));
+              if(fld.attributes && Object.keys(fld.attributes) == 0)
+                delete fld.attributes;
               delete fld.id;
               delete fld.table_id;
               delete fld.expression;
