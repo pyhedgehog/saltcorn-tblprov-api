@@ -1,6 +1,7 @@
 const Workflow = require("@saltcorn/data/models/workflow");
 const Table = require("@saltcorn/data/models/table");
 const Form = require("@saltcorn/data/models/form");
+const { getState } = require("@saltcorn/data/db/state");
 const fetch = require("node-fetch");
 fetch.Promise = Promise;
 const { stateToQueryString } = require("@saltcorn/data/plugin-helper");
@@ -45,20 +46,16 @@ async function api_scapi_table(cfg) {
 }
 
 function api_configuration_workflow(req) {
-  console.log("api_configuration_workflow =", req.body);
+  getState().log(5, "api_configuration_workflow =", req.body);
   return new Workflow({
     steps: [
       {
         name: "url",
         form: async function api_configuration_workflow_step1form_url(context) {
           const tbl = Table.findOne({ id: context.table_id });
-          console.log(
-            "api_configuration_workflow/url(1) =",
-            context,
-            tbl,
-            arguments,
-          );
-          console.dir(context);
+          getState().log(5, `api/step1/url = ${context}, ${tbl}`);
+          if ((context || {}).auth) Object.assign(context, context.auth);
+          else (context || {}).auth = {};
           return new Form({
             fields: [
               {
@@ -133,25 +130,31 @@ function api_configuration_workflow(req) {
       },
       {
         name: "fields",
-        form: async function api_configuration_workflow_step2form_scapi(
+        form: async function api_configuration_workflow_step2form_fields(
           context,
         ) {
-          console.log("api_configuration_workflow/fields(2) =", context);
           const tbl = Table.findOne({ id: context.table_id });
+          getState().log(5, `api/step1/fields = ${context}, ${tbl}`);
           let fields = null;
           let warnings = [];
           if (context.scapi) {
             const remote_tbl = await api_scapi_table(context);
-            console.log("remote_tbl =", remote_tbl);
+            getState().log(4, `remote_tbl = ${remote_tbl}`);
             fields = remote_tbl.fields.map(function convert_field(field) {
-              let fld = Object.fromEntries(Object.entries(field).filter(([k,v])=>(v!==null&&v!==false)));
+              let fld = Object.fromEntries(
+                Object.entries(field).filter(
+                  ([k, v]) => v !== null && v !== false,
+                ),
+              );
               fld.type =
                 typeof fld.type === "object" ? fld.type.name : fld.type;
               if (fld.type === "Key") fld.type = fld.reftype;
               if (!fld.description) delete fld.description;
-              if(typeof fld.attributes == "object")
-                fld.attributes = Object.fromEntries(Object.entries(fld.attributes).filter(([k,v])=>(v!==null)));
-              if(fld.attributes && Object.keys(fld.attributes) == 0)
+              if (typeof fld.attributes == "object")
+                fld.attributes = Object.fromEntries(
+                  Object.entries(fld.attributes).filter(([k, v]) => v !== null),
+                );
+              if (fld.attributes && Object.keys(fld.attributes) == 0)
                 delete fld.attributes;
               delete fld.id;
               delete fld.table_id;
@@ -169,7 +172,7 @@ function api_configuration_workflow(req) {
               delete fld.is_fkey;
               return fld;
             });
-            console.log("stripped scapi fields =", fields);
+            getState().log(4, `stripped scapi fields = ${fields}`);
           } else {
             const rows = await api_get_table_rows(context);
             const fieldNames = new Set(rows.map((r) => Object.keys(r)).flat());
@@ -181,8 +184,12 @@ function api_configuration_workflow(req) {
             fields = columns.map(([name, values]) => {
               let fld = { name };
               if (name === "id") fld.primary_key = true;
-              if (name === "id") fld.label = 'ID';
-              else fld.label = name.replace(/(^|_)(.)/g,(_,a,b)=>`${a}${b.toUpperCase()}`);
+              if (name === "id") fld.label = "ID";
+              else
+                fld.label = name.replace(
+                  /(^|_)(.)/g,
+                  (_, a, b) => `${a}${b.toUpperCase()}`,
+                );
               if (new Set(values).length == values.length) fld.unique = true;
               if (
                 !fieldNames.has("id") &&
@@ -204,28 +211,34 @@ function api_configuration_workflow(req) {
               else if (colNNTypes.length != 1) {
                 const warn = `Can't detect type for field ${name} there are ${colNNTypes.length} non-empty types (${colNNTypes}).`;
                 warnings.push(warn);
-                console.log(warn);
+                getState().log(2, warn);
                 fld.type = "String";
-              } else if (colNNTypes[0] == "boolean") fld.type = "Bool";
-              else if (colNNTypes[0] == "string")
-                fld.type = values.filter((v) => !!v).every(isDate)
-                  ? "Date"
-                  : "String";
-              else if (colNNTypes[0] == "number")
+              } else if (colNNTypes[0] == "boolean") {
+                fld.type = "Bool";
+              } else if (colNNTypes[0] == "string") {
+                if (values.filter((v) => !!v).every(isDate)) fld.type = "Date";
+                else if (
+                  values
+                    .filter((v) => !!v)
+                    .every((v) => /^#[0-9a-fA-Z]{6}$/.test(v))
+                )
+                  fld.type = "Color";
+                else fld.type = "String";
+              } else if (colNNTypes[0] == "number") {
                 fld.type = values
                   .filter((v) => !!v)
                   .every((i) => Math.trunc(i) === i)
                   ? "Integer"
                   : "Float";
-              else {
+              } else {
                 const warn = `Can't detect type for field ${name} from JS type ${colNNTypes}.`;
                 warnings.push(warn);
-                console.log(warn);
+                getState().log(2, warn);
                 fld.type = "String";
               }
               return fld;
             });
-            console.log("detected fields =", fields);
+            getState().log(4, `detected fields = ${fields}`);
           }
           context.fields = fields;
           //context["fields-json"] = JSON.stringify(fields, null, 2);
@@ -280,16 +293,23 @@ function api_configuration_workflow(req) {
 }
 
 async function api_get_fields(cfg) {
-  console.log("api_get_fields = ", cfg, arguments);
+  getState().log(4, `api_get_fields = ${cfg}`);
   return (
     (cfg || {}).fields || [
-      { name: "id", label: "ID", type: "Integer", primary_key: true },
+      {
+        name: "id",
+        label: "ID",
+        type: "Integer",
+        primary_key: true,
+        required: true,
+        is_unique: true,
+      },
     ]
   );
 }
 
 async function api_get_table_rows(cfg, where) {
-  console.log("api_get_table_rows =", { cfg, where });
+  getState().log(1, `api_get_table_rows = ${{ cfg, where }}`);
   const state = whereToViewState(where);
   const url0 = cfg.raw_url ? cfg.url : `${cfg.url}/api/${cfg.remote_name}`;
   const url =
@@ -310,10 +330,12 @@ async function api_get_table_rows(cfg, where) {
         : []),
     ],
   };
-  console.log("fetch_options =", fetch_options);
-  console.log("url =", url);
+  getState().log(4, `url = ${url}`);
   const resp = await fetch(url, fetch_options);
-  console.log(`Response status ${resp.status} ${resp.statusText} from ${url0}`);
+  getState().log(
+    4,
+    `Response status ${resp.status} ${resp.statusText} from ${url0}`,
+  );
   if (!resp.ok)
     throw new Error(
       `Response error ${resp.status} ${resp.statusText} from ${url0}`,
@@ -326,10 +348,10 @@ async function api_get_table_rows(cfg, where) {
 }
 
 function api_get_table(cfg, tbl) {
-  console.log("api_get_table = ", cfg, arguments);
-  return {
+  getState().log(4, `api_get_table = ${cfg}`);
+  return Object.assign(tbl, {
     getRows: (where) => api_get_table_rows(cfg, where),
-  };
+  });
 }
 
 const addOrCreateList = (container, key, x) => {

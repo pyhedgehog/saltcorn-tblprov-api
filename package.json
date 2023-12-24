@@ -1,6 +1,6 @@
 {
   "name": "saltcorn-tblprov-api",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "description": "Saltcorn plugin: Table provider for tables from other tenants/instances via REST API",
   "main": "index.js",
   "engines": {
