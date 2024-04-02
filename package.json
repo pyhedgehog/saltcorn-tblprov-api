@@ -1,6 +1,6 @@
 {
   "name": "saltcorn-tblprov-api",
-  "version": "0.1.1",
+  "version": "0.2.0",
   "description": "Saltcorn plugin: Table provider for tables from other tenants/instances via REST API",
   "main": "index.js",
   "engines": {
@@ -28,8 +28,8 @@
   },
   "homepage": "https://github.com/pyhedgehog/saltcorn-tblprov-api#readme",
   "dependencies": {
-    "@saltcorn/data": "^0.9.0-beta.1",
-    "@saltcorn/markup": "^0.9.0-beta.1",
+    "@saltcorn/data": "^0.9.0",
+    "@saltcorn/markup": "^0.9.0",
     "node-fetch": "^2.6.9"
   }
 }

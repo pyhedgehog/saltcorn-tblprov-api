@@ -1,6 +1,7 @@
 const Workflow = require("@saltcorn/data/models/workflow");
 const Table = require("@saltcorn/data/models/table");
 const Form = require("@saltcorn/data/models/form");
+const Field = require("@saltcorn/data/models/field");
 const { getState } = require("@saltcorn/data/db/state");
 const fetch = require("node-fetch");
 fetch.Promise = Promise;
@@ -46,27 +47,47 @@ async function api_scapi_table(cfg) {
 }
 
 function api_configuration_workflow(req) {
-  getState().log(5, "api_configuration_workflow =", req.body);
+  console.log("logLevel =", getState().logLevel);
+  getState().log(4, "api_configuration_workflow =", req.body);
   return new Workflow({
     steps: [
       {
         name: "url",
         form: async function api_configuration_workflow_step1form_url(context) {
-          const tbl = Table.findOne({ id: context.table_id });
-          getState().log(5, `api/step1/url = ${context}, ${tbl}`);
+          //const tbl = Table.findOne({ id: context.table_id });
+          const tbl = await Table.find_with_external(
+            { id: context.table_id },
+            { cached: false },
+          )[0];
+          console.log(
+            `api/step1/url = ${JSON.stringify(context)}; ${JSON.stringify(tbl)}`,
+          );
+          getState().log(
+            4,
+            "api/step1/url: context =",
+            context,
+            "; tbl =",
+            tbl,
+          );
           if ((context || {}).auth) Object.assign(context, context.auth);
           else (context || {}).auth = {};
+          console.log("state =", getState());
+          console.log("Bool =", Object.keys(getState().types));
+          function formfield_factory(fld) {
+            if (false) return new Field(fld);
+            return fld;
+          }
           return new Form({
             fields: [
-              {
+              formfield_factory({
                 name: "raw_url",
                 label: "Use URL as is",
                 sublabel: "don't append /api/{remote_name}",
                 required: true,
                 default: false,
                 type: "Bool",
-              },
-              {
+              }),
+              formfield_factory({
                 name: "http_method",
                 label: "Method of HTTP request",
                 type: "String",
@@ -74,14 +95,14 @@ function api_configuration_workflow(req) {
                 default: "GET",
                 attributes: { options: "GET,POST,PUT" },
                 showIf: { raw_url: true },
-              },
-              {
+              }),
+              formfield_factory({
                 name: "url",
                 label: "API URL",
                 required: true,
                 type: "String",
-              },
-              {
+              }),
+              formfield_factory({
                 name: "auth_type",
                 parent_field: "auth",
                 label: "API authorization type",
@@ -91,31 +112,31 @@ function api_configuration_workflow(req) {
                   options: "public,token,basic",
                   // options: "public,token,password",
                 },
-              },
-              {
+              }),
+              formfield_factory({
                 name: "token",
                 parent_field: "auth",
                 label: "API token",
                 type: "String",
                 showIf: { auth_type: "token" },
-              },
-              {
+              }),
+              formfield_factory({
                 name: "basic",
                 parent_field: "auth",
                 label: "Basic HTTP authorization",
                 sublabel: "Use 'username:password' form.",
                 type: "String",
                 showIf: { auth_type: "basic" },
-              },
-              {
+              }),
+              formfield_factory({
                 name: "remote_name",
                 label: "Name of remote table",
                 type: "String",
                 required: true,
-                default: tbl.name,
+                default: (tbl || {}).name,
                 showIf: { raw_url: false },
-              },
-              {
+              }),
+              formfield_factory({
                 name: "scapi",
                 label: "Use admin API",
                 sublabel: "Retrieve table description via SCAPI",
@@ -123,7 +144,41 @@ function api_configuration_workflow(req) {
                 required: true,
                 default: false,
                 showIf: { raw_url: false },
-              },
+              }),
+              formfield_factory({
+                name: "error_handling",
+                label: "What to do in case of request error",
+                type: "String",
+                required: true,
+                default: (tbl || {}).error_handling || "empty",
+                attributes: {
+                  options: [
+                    Object.assign(String("pass"), {
+                      name: "pass",
+                      value: "pass",
+                      label: "Throw exception outside (not recommended)",
+                    }),
+                    Object.assign(String("empty"), {
+                      name: "empty",
+                      value: "empty",
+                      label: "Return empty rowset",
+                    }),
+                    Object.assign(String("column"), {
+                      name: "column",
+                      value: "column",
+                      label:
+                        "Return one row with error in first available text column",
+                    }),
+                    Object.assign(String("error"), {
+                      name: "error",
+                      value: "error",
+                      label:
+                        "Return one row with error in distinct 'error' column",
+                    }),
+                  ],
+                  // options: "public,token,password",
+                },
+              }),
             ],
           });
         },
@@ -133,7 +188,10 @@ function api_configuration_workflow(req) {
         form: async function api_configuration_workflow_step2form_fields(
           context,
         ) {
-          const tbl = Table.findOne({ id: context.table_id });
+          const tbl = await Table.find_with_external(
+            { id: context.table_id },
+            { cached: true },
+          )[0];
           getState().log(5, `api/step1/fields = ${context}, ${tbl}`);
           let fields = null;
           let warnings = [];
@@ -294,18 +352,32 @@ function api_configuration_workflow(req) {
 
 async function api_get_fields(cfg) {
   getState().log(4, `api_get_fields = ${cfg}`);
-  return (
-    (cfg || {}).fields || [
-      {
-        name: "id",
-        label: "ID",
-        type: "Integer",
-        primary_key: true,
-        required: true,
-        is_unique: true,
-      },
-    ]
-  );
+  var fields = (cfg || {}).fields || [
+    {
+      name: "id",
+      label: "ID",
+      type: "Integer",
+      primary_key: true,
+      required: true,
+      is_unique: true,
+    },
+  ];
+  var want_error_column = false;
+  if ((cfg || {}).error_handling == "error")
+    want_error_column =
+      fields.filter((fld) => fld.name == "error").length === 0;
+  if ((cfg || {}).error_handling == "column")
+    want_error_column =
+      fields.filter((fld) => fld.type == "String").length === 0;
+  if (want_error_column) {
+    fields.push({
+      name: "error",
+      type: "String",
+      label: "Error message",
+      required: false,
+    });
+  }
+  return fields;
 }
 
 async function api_get_table_rows(cfg, where) {
@@ -331,20 +403,44 @@ async function api_get_table_rows(cfg, where) {
     ],
   };
   getState().log(4, `url = ${url}`);
+  if ((cfg || {}).error_handling == "error") {
+    cfg.error_column = "error";
+  }
+  if ((cfg || {}).error_handling == "column") {
+    const str_columns = cfg.fields.filter((fld) => fld.type == "String");
+    cfg.error_column = str_columns.length === 0 ? "error" : str_columns[0].name;
+  }
   const resp = await fetch(url, fetch_options);
+  if (!resp.ok)
+    return _process_error(
+      cfg,
+      `Response error ${resp.status} ${resp.statusText} from ${url0}`,
+    );
   getState().log(
     4,
     `Response status ${resp.status} ${resp.statusText} from ${url0}`,
   );
-  if (!resp.ok)
-    throw new Error(
-      `Response error ${resp.status} ${resp.statusText} from ${url0}`,
-    );
   const data = await resp.json();
   if (!data || !data.success)
-    throw new Error(`Invalid response ${JSON.stringify(data)} from ${url}`);
+    return _process_error(
+      cfg,
+      `Invalid response ${JSON.stringify(data)} from ${url}`,
+    );
   if (data.success === true && data.data) return data.data;
   return data.success;
+
+  function _process_error(cfg, error) {
+    getState().log(2, `Error fetching remote table: ${error}`);
+    getState().log(
+      4,
+      `cfg.error_handling = ${cfg.error_handling}, cfg.error_column = ${cfg.error_column}`,
+    );
+    if (cfg.error_handling === "column" || cfg.error_handling === "error") {
+      return [{ id: 0, [cfg.error_column]: error }];
+    }
+    if (cfg.error_handling === "pass") throw new Error(error);
+    return [];
+  }
 }
 
 function api_get_table(cfg, tbl) {
